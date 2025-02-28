@@ -1,0 +1,25 @@
+# Core Libraries
+numpy
+pandas
+matplotlib
+seaborn
+
+# Reinforcement Learning
+pytorch
+gymnasium
+gym-anytrading
+
+# Financial Data Handling
+yfinance
+pytorch
+
+# Web Development (Django + Vue.js support)
+Django
+
+# Development Tools
+black
+isort
+
+# Other useful libraries
+requests
+dotenv
