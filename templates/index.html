@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Traider</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            background-color: #1e222d;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .trade-button {
+            color: #fff;
+            font-size: 16px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border: none;
+            border-radius: 5px;
+            background: transparent;
+            padding: 12px 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .buy-button {
+            color: #28a745;
+        }
+
+        .sell-button {
+            color: #dc3545;
+        }
+
+        .error {
+            color: red;
+        }
+    </style>
+    <!-- Load TradingView library -->
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+</head>
+
+<body>
+    <h1>Traider</h1>
+
+    <!-- Ticker Input -->
+    <div style="margin-top: 10px;">
+        <label for="ticker">Ticker Symbol:</label>
+        <input type="text" id="ticker" value="{{ widget_stats.symbol }}">
+        <button onclick="updateWidget()">Update Chart</button>
+    </div>
+
+    <!-- TradingView widget container -->
+    <div id="tradingview_chart" style="height:400px; width:75%; margin: auto;"></div>
+
+    <!-- Date input -->
+    <div style="margin-top: 10px;">
+        <label for="date">Select Date:</label>
+        <input type="date" id="date">
+    </div>
+
+    <!-- Result button -->
+    <div style="margin-top: 20px;">
+        <button id="resultBtn" class="trade-button">Result</button>
+    </div>
+    <div id="error" class="error"></div>
+
+    <script>
+        // Global variable to hold the current ticker symbol.
+        var currentTicker = document.getElementById('ticker').value;
+
+        // Function to initialize/reinitialize the TradingView widget with the current ticker.
+        function initWidget() {
+            // Clear the container
+            document.getElementById('tradingview_chart').innerHTML = "";
+            new TradingView.widget({
+                "container_id": "tradingview_chart",
+                "autosize": true,
+                "symbol": currentTicker,
+                "interval": "{{ widget_stats.interval }}",
+                "timezone": "Etc/UTC",
+                "theme": "dark",
+                "style": "1",
+                "locale": "en",
+                "withdateranges": true,
+                "hide_side_toolbar": false,
+                "allow_symbol_change": false, // We handle symbol changes manually
+                "details": true,
+                "hotlist": true,
+                "calendar": false,
+                "support_host": "https://www.tradingview.com"
+            });
+        }
+
+        // Call initWidget initially
+        initWidget();
+
+        // When ticker input changes, update the global variable, reinitialize the widget, and evaluate.
+        function updateWidget() {
+            currentTicker = document.getElementById('ticker').value;
+            initWidget();
+            evaluate();
+        }
+
+        // Listen for changes on the date input.
+        document.getElementById('date').addEventListener('change', evaluate);
+
+        // Evaluation function: sends a POST request to the Flask backend.
+        function evaluate() {
+            var date = document.getElementById('date').value;
+            var errorDiv = document.getElementById('error');
+            errorDiv.textContent = '';
+
+            if (!currentTicker || !date) return;
+
+            fetch('/evaluate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol: currentTicker, date: date })
+            })
+                .then(response => response.json().then(data => ({ status: response.status, data })))
+                .then(obj => {
+                    if (obj.status !== 200) {
+                        document.getElementById('resultBtn').textContent = 'Error';
+                        errorDiv.textContent = obj.data.error;
+                    } else {
+                        var decision = obj.data.result;
+                        document.getElementById('resultBtn').textContent = decision;
+                        document.getElementById('resultBtn').className = 'trade-button ' + (decision === 'Buy' ? 'buy-button' : 'sell-button');
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('resultBtn').textContent = 'Error';
+                    errorDiv.textContent = 'Server error.';
+                });
+        }
+    </script>
+</body>
+
+</html>
