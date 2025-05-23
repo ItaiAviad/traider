@@ -1,17 +1,34 @@
-from flask import Flask, render_template, request, jsonify
 import datetime
-import yfinance as yf
-import torch
 
-from model import DQN, preprocess_obs
+import numpy as np
+import torch
+import torch.nn as nn
+import yfinance as yf
+from flask import Flask, jsonify, render_template, request
+from sklearn.preprocessing import MinMaxScaler
 
 app = Flask(__name__)
 
 
+# Define the same LSTM model class used during training
+class LSTMModel(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, dropout):
+        super(LSTMModel, self).__init__()
+        self.lstm = nn.LSTM(
+            input_size, hidden_size, num_layers, batch_first=True, dropout=dropout
+        )
+        self.fc = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        out = out[:, -1, :]  # Take the last output
+        out = self.fc(out)
+        return out
+
+
 @app.route("/")
 def index():
-    # Pass default widget stats to the template.
-    widget_stats = {"symbol": "GOOG", "interval": "D"}
+    widget_stats = {"symbol": "AMZN", "interval": "D"}
     return render_template("index.html", widget_stats=widget_stats)
 
 
@@ -27,46 +44,69 @@ def evaluate():
     except Exception:
         return jsonify({"error": "Invalid date format"}), 400
 
-    today = datetime.date.today()
-    if chosen_date > today:
-        return jsonify({"error": "Date is in the future"}), 400
-
-    # Download historical data (300-day buffer)
+    # Download historical data (300 days before chosen date)
     start_date = chosen_date - datetime.timedelta(days=300)
     end_date = chosen_date.strftime("%Y-%m-%d")
     ticker = yf.Ticker(symbol)
     df = ticker.history(start=start_date.strftime("%Y-%m-%d"), end=end_date)
 
-    if df.empty or df.shape[0] < 200:
+    if df.empty or df.shape[0] < 60:
         return jsonify({"error": "Not enough historical data or stock not found"}), 400
 
-    # Use the last 200 days; take the last 10 days as the observation window.
-    data_200 = df.tail(200)
-    window_size = 10  # must match training setup
-    obs_data = data_200["Close"].tail(window_size).to_numpy()
-    observation = obs_data.reshape(window_size, 1)
+    # Prepare last 60 days of Close and EMA for LSTM input
+    seq_length = 60
+    df["EMA"] = df["Close"].ewm(span=20, adjust=False).mean()
 
-    # Setup the model
-    input_dim = window_size  # flattened observation of shape (window_size,)
-    output_dim = 2  # 2 actions: Buy and Sell
-    device = torch.device("cpu")
-    model = DQN(input_dim, output_dim).to(device)
+    features = ["Close", "EMA"]
+    data_features = df[features].tail(seq_length).to_numpy()
+
+    # Normalize with MinMaxScaler (fit on current data)
+    scaler = MinMaxScaler()
+    data_scaled = scaler.fit_transform(data_features)
+
+    input_tensor = (
+        torch.FloatTensor(data_scaled).unsqueeze(0).to("cpu")
+    )  # shape: (1, 60, 2)
+
+    # Load trained model
+    input_size = 2
+    hidden_size = 128
+    num_layers = 3
+    dropout = 0.01
 
     try:
-        model.load_state_dict(torch.load("dqn_trading_model.pth", map_location=device))
-    except Exception:
-        return jsonify({"error": "Model weights not found"}), 500
+        model = LSTMModel(input_size, hidden_size, num_layers, dropout).to("cpu")
+        model.load_state_dict(
+            torch.load("model/best_model.pth", map_location=torch.device("cpu"))
+        )
+    except Exception as e:
+        print(f"Model load/init error: {e}")
+        return jsonify({"error": "Model loading failed"}), 500
+
     model.eval()
 
-    obs_flat = preprocess_obs(observation)
-    obs_tensor = torch.FloatTensor(obs_flat).unsqueeze(0).to(device)
+    # Predict and inverse transform
+    try:
+        with torch.no_grad():
+            pred_norm = model(input_tensor).item()
 
-    with torch.no_grad():
-        q_values = model(obs_tensor)
-        action = q_values.argmax().item()
+        dummy_row = np.zeros((1, len(features)))
+        dummy_row[0, features.index("Close")] = pred_norm
 
-    decision = "Sell" if action == 1 else "Buy"
-    return jsonify({"result": decision})
+        pred_inverse = scaler.inverse_transform(dummy_row)[0, features.index("Close")]
+    except Exception as e:
+        print(f"Prediction error: {e}")
+        return jsonify({"error": "Prediction failed"}), 500
+
+    last_close = df["Close"].iloc[-1]
+    decision = "Buy" if pred_inverse > last_close else "Sell"
+
+    response = {
+        "predicted_price": round(pred_inverse, 2),
+        "decision": decision,
+    }
+
+    return jsonify(response)
 
 
 if __name__ == "__main__":
