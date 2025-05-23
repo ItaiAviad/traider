@@ -25,18 +25,34 @@
             padding: 12px 20px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             transition: transform 0.2s, box-shadow 0.2s;
+            cursor: pointer;
+            margin: 10px auto;
+            display: inline-block;
+            min-width: 120px;
         }
 
         .buy-button {
             color: #28a745;
+            border: 2px solid #28a745;
         }
 
         .sell-button {
             color: #dc3545;
+            border: 2px solid #dc3545;
+        }
+
+        .disabled-button {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .error {
             color: red;
+        }
+
+        #price-info {
+            margin-top: 10px;
+            font-size: 18px;
         }
     </style>
     <!-- Load TradingView library -->
@@ -64,17 +80,16 @@
 
     <!-- Result button -->
     <div style="margin-top: 20px;">
-        <button id="resultBtn" class="trade-button">Result</button>
+        <button id="resultBtn" class="trade-button disabled-button" disabled>Result</button>
     </div>
+
+    <div id="price-info"></div>
     <div id="error" class="error"></div>
 
     <script>
-        // Global variable to hold the current ticker symbol.
         var currentTicker = document.getElementById('ticker').value;
 
-        // Function to initialize/reinitialize the TradingView widget with the current ticker.
         function initWidget() {
-            // Clear the container
             document.getElementById('tradingview_chart').innerHTML = "";
             new TradingView.widget({
                 "container_id": "tradingview_chart",
@@ -87,7 +102,7 @@
                 "locale": "en",
                 "withdateranges": true,
                 "hide_side_toolbar": false,
-                "allow_symbol_change": false, // We handle symbol changes manually
+                "allow_symbol_change": false,
                 "details": true,
                 "hotlist": true,
                 "calendar": false,
@@ -95,24 +110,27 @@
             });
         }
 
-        // Call initWidget initially
         initWidget();
 
-        // When ticker input changes, update the global variable, reinitialize the widget, and evaluate.
         function updateWidget() {
             currentTicker = document.getElementById('ticker').value;
             initWidget();
             evaluate();
         }
 
-        // Listen for changes on the date input.
         document.getElementById('date').addEventListener('change', evaluate);
 
-        // Evaluation function: sends a POST request to the Flask backend.
         function evaluate() {
             var date = document.getElementById('date').value;
             var errorDiv = document.getElementById('error');
+            var resultBtn = document.getElementById('resultBtn');
+            var priceInfo = document.getElementById('price-info');
+
             errorDiv.textContent = '';
+            priceInfo.textContent = '';
+            resultBtn.disabled = true;
+            resultBtn.className = 'trade-button disabled-button';
+            resultBtn.textContent = 'Result';
 
             if (!currentTicker || !date) return;
 
@@ -124,16 +142,24 @@
                 .then(response => response.json().then(data => ({ status: response.status, data })))
                 .then(obj => {
                     if (obj.status !== 200) {
-                        document.getElementById('resultBtn').textContent = 'Error';
+                        resultBtn.textContent = 'Error';
                         errorDiv.textContent = obj.data.error;
                     } else {
-                        var decision = obj.data.result;
-                        document.getElementById('resultBtn').textContent = decision;
-                        document.getElementById('resultBtn').className = 'trade-button ' + (decision === 'Buy' ? 'buy-button' : 'sell-button');
+                        const data = obj.data;
+                        // Show predicted price
+                        priceInfo.textContent = `Predicted Price: ${data.predicted_price}`;
+                        if (data.actual_price !== undefined) {
+                            priceInfo.textContent += ` | Actual Price: ${data.actual_price}`;
+                        }
+
+                        // Show decision
+                        resultBtn.textContent = data.decision;
+                        resultBtn.disabled = false;
+                        resultBtn.className = 'trade-button ' + (data.decision === 'Buy' ? 'buy-button' : 'sell-button');
                     }
                 })
                 .catch(err => {
-                    document.getElementById('resultBtn').textContent = 'Error';
+                    resultBtn.textContent = 'Error';
                     errorDiv.textContent = 'Server error.';
                 });
         }
@@ -141,3 +167,4 @@
 </body>
 
 </html>
+
