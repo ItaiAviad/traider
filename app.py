@@ -38,17 +38,25 @@ def evaluate():
     symbol = data.get("symbol")
     date_str = data.get("date")
 
-    # Validate date format
+    # Validate date
     try:
         chosen_date = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
     except Exception:
         return jsonify({"error": "Invalid date format"}), 400
 
-    # Download historical data (300 days before chosen date)
+    today = datetime.date.today()
+    if chosen_date > today:
+        return jsonify({"error": "Date is in the future"}), 400
+
+    # Download historical data
     start_date = chosen_date - datetime.timedelta(days=300)
     end_date = chosen_date.strftime("%Y-%m-%d")
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(start=start_date.strftime("%Y-%m-%d"), end=end_date)
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(start=start_date.strftime("%Y-%m-%d"), end=end_date)
+    except Exception as e:
+        print(f"Error downloading data: {e}")
+        return jsonify({"error": "Error downloading data"}), 500
 
     if df.empty or df.shape[0] < 60:
         return jsonify({"error": "Not enough historical data or stock not found"}), 400
@@ -76,12 +84,17 @@ def evaluate():
 
     try:
         model = LSTMModel(input_size, hidden_size, num_layers, dropout).to("cpu")
+    except Exception as e:
+        print(f"Model init error: {e}")
+        return jsonify({"error": "Model not loaded"}), 500
+
+    try:
         model.load_state_dict(
             torch.load("model/best_model.pth", map_location=torch.device("cpu"))
         )
     except Exception as e:
-        print(f"Model load/init error: {e}")
-        return jsonify({"error": "Model loading failed"}), 500
+        print(f"Model load error: {e}")
+        return jsonify({"error": "Model weights not found"}), 500
 
     model.eval()
 
@@ -90,21 +103,20 @@ def evaluate():
         with torch.no_grad():
             pred_norm = model(input_tensor).item()
 
-        dummy_row = np.zeros((1, len(features)))
-        dummy_row[0, features.index("Close")] = pred_norm
+        dummy_row = np.zeros((1, len(features)))  # zeros for all features
+        dummy_row[0, features.index("Close")] = pred_norm  # put predicted close value
 
         pred_inverse = scaler.inverse_transform(dummy_row)[0, features.index("Close")]
     except Exception as e:
         print(f"Prediction error: {e}")
         return jsonify({"error": "Prediction failed"}), 500
 
+    # Determine buy/sell decision
     last_close = df["Close"].iloc[-1]
     decision = "Buy" if pred_inverse > last_close else "Sell"
 
-    response = {
-        "predicted_price": round(pred_inverse, 2),
-        "decision": decision,
-    }
+    # Return response
+    response = {"predicted_price": round(pred_inverse, 2), "decision": decision}
 
     return jsonify(response)
 
